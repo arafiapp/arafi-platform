@@ -271,7 +271,6 @@ const Landing = () => {
                       <span>10</span>
                       <span>11</span>
                       <span>12</span>
-                      <span>13</span>
                     </div>
                     <code>
                       <span className="text-primary font-bold">curl</span> -X POST https://api.arafi.com/v1/intents \

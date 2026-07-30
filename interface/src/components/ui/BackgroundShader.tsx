@@ -42,29 +42,27 @@ export default function BackgroundShader() {
     const fs = `precision highp float;
       uniform float u_time;
       uniform vec2 u_resolution;
-      uniform float u_is_dark;
-
-      // Simple random function for noise
-      float random(vec2 st) {
-          return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
-      }
 
       void main() {
           vec2 uv = gl_FragCoord.xy / u_resolution.xy;
           
-          // Generate high-frequency noise (animated slightly by time)
-          float n = random(uv + mod(u_time * 0.1, 10.0));
+          // Create a very subtle, flowing dark gradient noise
+          vec2 p = uv * 3.0;
+          float t = u_time * 0.15;
           
-          // Very dark gray for dark mode, very light gray for light mode
-          vec3 baseColor = mix(vec3(0.97, 0.98, 0.99), vec3(0.02, 0.02, 0.02), u_is_dark);
+          float noise = sin(p.x + t) * cos(p.y - t) * 0.1;
+          noise += sin(p.y * 1.5 + t * 1.2) * 0.05;
           
-          // Add subtle grain (darker grain in light mode, lighter grain in dark mode)
-          float grainStrength = mix(-0.02, 0.02, u_is_dark);
-          vec3 finalColor = baseColor + vec3(n * grainStrength);
+          // Deep slate base #0d0d15
+          vec3 baseColor = vec3(0.051, 0.051, 0.082);
+          // Subtle indigo glow #6366F1
+          vec3 accentColor = vec3(0.388, 0.4, 0.945);
           
-          // Subtle Vignette
+          vec3 finalColor = mix(baseColor, baseColor * 1.2 + accentColor * 0.05, noise + 0.1);
+          
+          // Vignette
           float dist = distance(uv, vec2(0.5));
-          finalColor *= mix(1.0 + dist * 0.1, 1.0 - dist * 0.3, u_is_dark);
+          finalColor *= 1.0 - dist * 0.5;
 
           gl_FragColor = vec4(finalColor, 1.0);
       }`;
@@ -103,7 +101,6 @@ export default function BackgroundShader() {
 
     const uTime = gl.getUniformLocation(prog, "u_time");
     const uRes = gl.getUniformLocation(prog, "u_resolution");
-    const uIsDark = gl.getUniformLocation(prog, "u_is_dark");
 
     let animationFrameId: number;
 
@@ -112,10 +109,6 @@ export default function BackgroundShader() {
       gl.viewport(0, 0, canvas.width, canvas.height);
       if (uTime) gl.uniform1f(uTime, t * 0.001);
       if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
-      if (uIsDark) {
-        const isDark = document.documentElement.classList.contains("dark") ? 1.0 : 0.0;
-        gl.uniform1f(uIsDark, isDark);
-      }
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       animationFrameId = requestAnimationFrame(render);
     }

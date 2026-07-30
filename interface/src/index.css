@@ -216,6 +216,25 @@
 }
 
 @layer utilities {
+  .btn-primary {
+    @apply bg-on-surface text-surface hover:bg-on-surface/90 transition-colors shadow-[0_1px_2px_rgba(0,0,0,0.1)];
+  }
+  
+  .btn-secondary {
+    @apply bg-on-surface/5 text-on-surface border border-on-surface/10 border-t-on-surface/20 hover:bg-on-surface/10 transition-colors shadow-sm backdrop-blur-md;
+  }
+
+  .glass-nav {
+    @apply backdrop-blur-xl bg-surface/40 border border-on-surface/10 rounded-full shadow-lg shadow-black/5;
+  }
+
+  .bg-grid {
+    background-size: 40px 40px;
+    background-image: 
+      linear-gradient(to right, color-mix(in srgb, var(--app-on-surface) 4%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in srgb, var(--app-on-surface) 4%, transparent) 1px, transparent 1px);
+  }
+
   .hero-glow {
     background: radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
   }
@@ -238,6 +257,19 @@
   @keyframes blink {
     0%, 100% { opacity: 1; }
     50% { opacity: 0; }
+  }
+
+  @keyframes marquee {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+
+  .animate-marquee {
+    animation: marquee 25s linear infinite;
+  }
+  
+  .animate-marquee:hover {
+    animation-play-state: paused;
   }
 
   .glow-button:hover {

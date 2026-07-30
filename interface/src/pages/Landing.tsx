@@ -138,21 +138,45 @@ const Landing = () => {
                       create_payment_intent.sh
                     </span>
                   </div>
-                  <div className="p-5 font-code-sm text-[13px] leading-relaxed text-secondary-fixed/80 overflow-x-auto">
-                    <pre>
-                      <code>
-                        {`curl https://api.arafi.com/v1/intents \\
-  -H `}
-                        <span className="text-tertiary">
-                          {typedAuth}
-                        </span>
-                        {` \\
-  -d `}
-                        <span className="text-tertiary">{typedPayload}</span>
-                        <span className="inline-block w-1.5 h-4 bg-primary ml-1 align-middle cursor-blink"></span>
-                      </code>
-                    </pre>
-                  </div>
+                  <button
+                    onClick={copyHero}
+                    className="text-on-surface/40 hover:text-on-surface/80 transition-colors flex items-center justify-center p-1.5 rounded-md hover:bg-on-surface/5"
+                    aria-label="Copy code"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">
+                      {copiedHero ? 'check' : 'content_copy'}
+                    </span>
+                  </button>
+                </div>
+
+                {/* Code Body */}
+                <div className="p-6 font-code-sm text-[13px] leading-[1.8] text-on-surface/80 overflow-x-auto flex-1 flex flex-col justify-center relative z-10">
+                  <pre className="flex">
+                    <div className="flex flex-col text-on-surface/20 select-none text-right pr-4 mr-4 border-r border-on-surface/10 font-label-mono text-[11px] leading-[1.8]">
+                      <span>1</span>
+                      <span>2</span>
+                      <span>3</span>
+                      <span>4</span>
+                      <span>5</span>
+                      <span>6</span>
+                      <span>7</span>
+                      <span>8</span>
+                      <span>9</span>
+                      <span>10</span>
+                      <span>11</span>
+                      <span>12</span>
+                    </div>
+                    <code>
+                      <span className="text-primary font-bold">curl</span> -X POST https://api.arafi.com/v1/intents \
+                      <br />
+                      <span className="text-on-surface/50">  -H</span> <span className="text-emerald-400">"Content-Type: application/json"</span> \
+                      <br />
+                      <span className="text-on-surface/50">  -H</span> <span className="text-emerald-400">{typedAuth}</span> \
+                      <br />
+                      <span className="text-on-surface/50">  -d</span> <span className="text-emerald-400 whitespace-pre">{typedPayload}</span>
+                      <span className="inline-block w-1.5 h-4 bg-primary/80 ml-1.5 align-middle animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.6)]"></span>
+                    </code>
+                  </pre>
                 </div>
               </div>
             </div>

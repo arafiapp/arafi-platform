@@ -675,4 +675,20 @@
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
+
+  /* ── Toast Slide-In Animations ── */
+  @keyframes toast-slide-in {
+    from {
+      transform: translateY(1.5rem) scale(0.96);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
+  }
+
+  .animate-slide-in {
+    animation: toast-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
 }

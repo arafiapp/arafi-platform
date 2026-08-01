@@ -61,7 +61,7 @@ function MaintenanceOverlay({ onDismiss }: { onDismiss: () => void }) {
   const turnstileToken = useRef<string>("");
 
   const [email, setEmail] = useState("");
-  const [intent, setIntent] = useState<"builder" | "curious">("builder");
+  const [intent, setIntent] = useState<"builder" | "arafi_curious">("builder");
   const [honeypot, setHoneypot] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -204,7 +204,7 @@ function MaintenanceOverlay({ onDismiss }: { onDismiss: () => void }) {
                 <span className="font-mono text-[10px] text-white/30 uppercase tracking-widest mr-1">I am</span>
                 {([
                   { value: "builder", label: "A Developer" },
-                  { value: "curious", label: "Just Curious" },
+                  { value: "arafi_curious", label: "Just Curious" },
                 ] as const).map((opt) => (
                   <button
                     key={opt.value}

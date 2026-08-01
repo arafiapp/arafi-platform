@@ -266,11 +266,22 @@ export default function Waitlist() {
   const turnstileToken = useRef<string>("");
 
   const [email, setEmail] = useState("");
-  const [intent, setIntent] = useState<"builder" | "curious">("builder");
+  const [intent, setIntent] = useState<"builder" | "arafi_curious">("builder");
   const [honeypot, setHoneypot] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [isLight, setIsLight] = useState(false);
+
+  // Toast notification state
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: "success" | "error" | "info" }[]>([]);
+
+  const showToast = useCallback((message: string, type: "success" | "error" | "info") => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  }, []);
 
   // Monitor prefers-color-scheme setting changes to apply light theme correctly
   useEffect(() => {
@@ -399,13 +410,17 @@ export default function Waitlist() {
 
       // Disposable email check
       if (isDisposableEmail(email)) {
-        setErrorMsg("Please use a real email address — we'll only write when it matters.");
+        const msg = "Please use a real email address — we'll only write when it matters.";
+        setErrorMsg(msg);
+        showToast(msg, "error");
         return;
       }
 
       // Turnstile check
       if (!turnstileToken.current) {
-        setErrorMsg("Please complete the verification check below before submitting.");
+        const msg = "Please complete the verification check below before submitting.";
+        setErrorMsg(msg);
+        showToast(msg, "error");
         return;
       }
 
@@ -426,10 +441,16 @@ export default function Waitlist() {
 
         const data = await res.json();
 
-        if (res.status === 201 || res.status === 409) {
+        if (res.status === 201) {
+          showToast(data?.Message || "Successfully joined the waitlist!", "success");
+          setStatus("success");
+        } else if (res.status === 409) {
+          showToast(data?.Message || "You are already on the waitlist!", "info");
           setStatus("success");
         } else {
-          setErrorMsg(data?.Message || "Something went wrong. Please try again.");
+          const msg = data?.Message || "Something went wrong. Please try again.";
+          setErrorMsg(msg);
+          showToast(msg, "error");
           setStatus("error");
           if (widgetId.current && window.turnstile) {
             window.turnstile.reset(widgetId.current);
@@ -437,7 +458,9 @@ export default function Waitlist() {
           }
         }
       } catch {
-        setErrorMsg("Network error. Please check your connection and try again.");
+        const msg = "Network error. Please check your connection and try again.";
+        setErrorMsg(msg);
+        showToast(msg, "error");
         setStatus("error");
         if (widgetId.current && window.turnstile) {
           window.turnstile.reset(widgetId.current);
@@ -445,7 +468,7 @@ export default function Waitlist() {
         }
       }
     },
-    [email, intent, honeypot]
+    [email, intent, honeypot, showToast]
   );
 
   return (
@@ -522,7 +545,7 @@ export default function Waitlist() {
                     {(
                       [
                         { value: "builder", label: "A Developer" },
-                        { value: "curious", label: "Just Curious" },
+                        { value: "arafi_curious", label: "Just Curious" },
                       ] as const
                     ).map((opt) => (
                       <button
@@ -834,6 +857,34 @@ export default function Waitlist() {
           </span>
         </div>
       </footer>
+      {/* Toasts Container */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`pointer-events-auto flex items-center gap-3 px-4 py-3.5 rounded-xl border shadow-lg animate-slide-in transition-all duration-300 ${
+              t.type === "success"
+                ? "bg-surface-container-lowest border-success/30 text-success"
+                : t.type === "info"
+                ? "bg-surface-container-lowest border-primary/30 text-primary"
+                : "bg-surface-container-lowest border-error/30 text-error"
+            }`}
+          >
+            <span className="material-symbols-outlined text-[20px] flex-shrink-0">
+              {t.type === "success" ? "check_circle" : t.type === "info" ? "info" : "error"}
+            </span>
+            <span className="font-body-md text-[13px] text-on-surface leading-tight flex-1">
+              {t.message}
+            </span>
+            <button
+              onClick={() => setToasts((prev) => prev.filter((item) => item.id !== t.id))}
+              className="text-on-surface/40 hover:text-on-surface/75 transition-colors flex-shrink-0 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -314,7 +314,6 @@ export default function Waitlist() {
         },
       });
 
-      setTurnstileReady(true);
     };
 
     const startPolling = () => {

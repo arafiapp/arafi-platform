@@ -59,3 +59,7 @@ activemq-data/
 
 # 7. Local Engineering Documentation
 .arafi-engineering/
+
+# 8. Internal Audit Reports (Not Tracked)
+ARAFI_PLATFORM_AUDIT_*.pdf
+ARAFI_PLATFORM_AUDIT_*.html

@@ -4,6 +4,8 @@ import com.yourara.arafi.model.*;
 import com.yourara.arafi.model.request.CreateProductCheckoutRequest;
 import com.yourara.arafi.model.request.CreateProductRequest;
 import com.yourara.arafi.repository.*;
+import com.yourara.arafi.gateway.GatewayRoutingEngine;
+import com.yourara.arafi.gateway.dto.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -26,6 +28,7 @@ public class ProductService {
     private final WebhookDispatchRepository webhookDispatchRepository;
     private final NombaClientService nombaClientService;
     private final ResendEmailService resendEmailService;
+    private final GatewayRoutingEngine gatewayRoutingEngine;
 
     @org.springframework.beans.factory.annotation.Value("${nomba.callback.url:https://arafi.yourara.com/checkout/callback}")
     private String nombaCallbackUrl;
@@ -131,43 +134,67 @@ public class ProductService {
                             : redirectCallbackUrl + "?type=product";
                 }
 
-                // Call Nomba checkout order
-                Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
-                        nombaRef,
-                        product.getPriceKobo(),
-                        customer.getEmail(),
-                        redirectCallbackUrl,
-                        List.of("Card"));
+                CardChargeRequest cardRequest = CardChargeRequest.builder()
+                        .arafiCustomerId(customer.getId().toString())
+                        .customerEmail(customer.getEmail())
+                        .amountNgn(amountDecimal)
+                        .currency("NGN")
+                        .orderReference(ptx.getId().toString())
+                        .callbackUrl(redirectCallbackUrl)
+                        .build();
 
-                if ("success".equals(checkoutResult.get("status"))) {
-                    checkoutUrl = checkoutResult.get("checkoutLink");
+                GatewayChargeResult checkoutResult = gatewayRoutingEngine.routeCardCharge(
+                        cardRequest, amountDecimal, "NGN",
+                        request.getPreferredGateway(),
+                        request.isAllowFallback(),
+                        request.isInternational());
+
+                if (checkoutResult.isSuccess()) {
+                    checkoutUrl = checkoutResult.getCheckoutUrl();
+                    nombaRef = ptx.getId().toString();
+                    ptx.setGatewayReference(checkoutResult.getGatewayTransactionId());
+                    ptx.setGatewayUsed(checkoutResult.getGatewayUsed());
                 } else {
-                    throw new IllegalStateException("Nomba checkout API failed: " + checkoutResult.get("message"));
+                    throw new IllegalStateException("Gateway checkout API failed: " + checkoutResult.getErrorMessage());
                 }
             } else if ("BANK_TRANSFER".equalsIgnoreCase(paymentMethod)) {
-                // Provision Nomba virtual account
                 String accountRef = "arafi_vban_prod_" + ptx.getId().toString() + "_" + System.currentTimeMillis();
                 String accountName = customer.getName() != null && !customer.getName().isBlank()
                         ? customer.getName()
                         : "ARAFI " + customer.getEmail();
 
-                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(
-                        accountRef,
-                        accountName,
-                        amountDecimal);
+                String[] nameParts = accountName.split(" ", 2);
+                String firstName = nameParts[0];
+                String lastName = nameParts.length > 1 ? nameParts[1] : "";
 
-                if ("success".equals(accountDetails.get("status"))) {
-                    virtualAccountNumber = accountDetails.get("bankAccountNumber");
-                    bankName = accountDetails.get("bankName");
-                    bankAccountName = customer.getName() != null && !customer.getName().isBlank()
-                            ? "ARAFI * " + customer.getName()
-                            : "ARAFI * " + customer.getEmail();
+                VirtualAccountRequest vaRequest = VirtualAccountRequest.builder()
+                        .accountRef(accountRef)
+                        .accountName(accountName)
+                        .customerEmail(customer.getEmail())
+                        .customerPhone("")
+                        .firstName(firstName)
+                        .lastName(lastName)
+                        .expectedAmountNgn(amountDecimal)
+                        .currency("NGN")
+                        .orderId(ptx.getId().toString())
+                        .description("Arafi Product Purchase")
+                        .build();
+
+                GatewayAccountResult accountResult = gatewayRoutingEngine.routeDynamicVirtualAccount(
+                        vaRequest,
+                        request.getPreferredGateway(),
+                        request.isAllowFallback());
+
+                if (accountResult.isSuccess()) {
+                    virtualAccountNumber = accountResult.getBankAccountNumber();
+                    bankName = accountResult.getBankName();
+                    bankAccountName = accountResult.getAccountName();
+                    ptx.setGatewayReference(accountResult.getGatewayRef());
+                    ptx.setGatewayUsed(accountResult.getGatewayUsed());
                 } else {
-                    throw new IllegalStateException(
-                            "Nomba virtual account API failed: " + accountDetails.get("message"));
+                    throw new IllegalStateException("Gateway virtual account API failed: " + accountResult.getErrorMessage());
                 }
 
-                // Redirect link to our Arafi frontend checkout page
                 checkoutUrl = "https://arafi-platform.vercel.app/checkout/" + ptx.getId().toString() + "?type=product";
             } else {
                 throw new IllegalArgumentException("Unsupported payment method: " + paymentMethod);
@@ -325,18 +352,15 @@ public class ProductService {
             return Map.of("status", "SUCCESS", "redirectUrl", ptx.getRedirectUrl() != null ? ptx.getRedirectUrl() : "");
         }
 
-        // Verify with Nomba
+        // Verify with gateway routing engine
         com.yourara.arafi.security.RequestContext.setContext(ptx.getAppId(), "TEST");
         try {
-            Map<String, Object> details = nombaClientService.fetchTransactionByOrderReference(orderReference);
-            String orderStatus = "UNKNOWN";
-            if (details != null && "00".equals(details.get("code")) && details.get("data") instanceof Map) {
-                Map<String, Object> data = (Map<String, Object>) details.get("data");
-                orderStatus = data.get("status") != null ? data.get("status").toString() : "UNKNOWN";
-            }
+            String gatewayUsed = ptx.getGatewayUsed() != null ? ptx.getGatewayUsed() : "NOMBA";
+            GatewayChargeResult verifyResult = gatewayRoutingEngine.verifyTransaction(ptx.getGatewayReference(), orderReference, gatewayUsed);
 
-            if ("SUCCESS".equalsIgnoreCase(orderStatus) || "PAID".equalsIgnoreCase(orderStatus)) {
+            if (verifyResult.isSuccess()) {
                 ptx.setStatus("SUCCESS");
+                ptx.setGatewayReference(verifyResult.getGatewayTransactionId());
                 productTransactionRepository.save(ptx);
 
                 BigDecimal amount = BigDecimal.valueOf(ptx.getAmountKobo()).divide(BigDecimal.valueOf(100));
@@ -344,10 +368,10 @@ public class ProductService {
                 // Save double-entry ledger entry
                 LedgerEntry entry = LedgerEntry.builder()
                         .appId(ptx.getAppId())
-                        .bankAccountNumber("NOMBA CARD GATEWAY")
+                        .bankAccountNumber("CARD GATEWAY - " + gatewayUsed)
                         .amount(amount)
                         .entryType("CREDIT")
-                        .webhookEventId(ptx.getId().toString())
+                        .webhookEventId(verifyResult.getGatewayTransactionId() != null ? verifyResult.getGatewayTransactionId() : ptx.getId().toString())
                         .build();
                 ledgerEntryRepository.save(entry);
 
@@ -358,13 +382,54 @@ public class ProductService {
                 Customer customer = customerRepository.findById(ptx.getCustomerId()).orElse(null);
                 if (customer != null) {
                     resendEmailService.sendBillingAlert(ptx.getAppId(), customer.getEmail(), customer.getEmail(),
-                            amount, "card", "SUCCESS", "Nomba Checkout Gateway", "N/A");
+                            amount, "card", "SUCCESS", gatewayUsed + " Checkout Gateway", "N/A");
                 }
 
                 return Map.of("status", "SUCCESS", "redirectUrl",
                         ptx.getRedirectUrl() != null ? ptx.getRedirectUrl() : "");
             } else {
                 return Map.of("status", ptx.getStatus(), "redirectUrl", "");
+            }
+        } finally {
+            com.yourara.arafi.security.RequestContext.clear();
+        }
+    }
+
+    @Transactional
+    public void markProductTransactionSuccess(String orderReference, String gatewayReference, String gatewayUsed) {
+        ProductTransaction ptx = productTransactionRepository.findById(UUID.fromString(orderReference))
+                .orElseThrow(() -> new IllegalArgumentException("Product transaction not found: " + orderReference));
+        if ("SUCCESS".equalsIgnoreCase(ptx.getStatus())) {
+            return;
+        }
+
+        com.yourara.arafi.security.RequestContext.setContext(ptx.getAppId(), "TEST");
+        try {
+            ptx.setStatus("SUCCESS");
+            ptx.setGatewayReference(gatewayReference);
+            ptx.setGatewayUsed(gatewayUsed);
+            productTransactionRepository.save(ptx);
+
+            BigDecimal amount = BigDecimal.valueOf(ptx.getAmountKobo()).divide(BigDecimal.valueOf(100));
+
+            // Save double-entry ledger entry
+            LedgerEntry entry = LedgerEntry.builder()
+                    .appId(ptx.getAppId())
+                    .bankAccountNumber("CARD GATEWAY - " + gatewayUsed)
+                    .amount(amount)
+                    .entryType("CREDIT")
+                    .webhookEventId(gatewayReference != null ? gatewayReference : ptx.getId().toString())
+                    .build();
+            ledgerEntryRepository.save(entry);
+
+            // Queue Merchant webhook callback
+            triggerMerchantProductCallback(ptx);
+
+            // Send email alert receipt
+            Customer customer = customerRepository.findById(ptx.getCustomerId()).orElse(null);
+            if (customer != null) {
+                resendEmailService.sendBillingAlert(ptx.getAppId(), customer.getEmail(), customer.getEmail(),
+                        amount, "card", "SUCCESS", gatewayUsed + " Card Checkout", "N/A");
             }
         } finally {
             com.yourara.arafi.security.RequestContext.clear();

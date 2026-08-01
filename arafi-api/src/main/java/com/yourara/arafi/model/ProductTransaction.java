@@ -47,6 +47,12 @@ public class ProductTransaction {
     @Column(name = "nomba_reference")
     private String nombaReference;
 
+    @Column(name = "gateway_used")
+    private String gatewayUsed; // "FLUTTERWAVE", "ALATPAY", "PAYSTACK", "NOMBA"
+
+    @Column(name = "gateway_reference")
+    private String gatewayReference;
+
     @Column(name = "checkout_url", length = 1024)
     private String checkoutUrl;
 

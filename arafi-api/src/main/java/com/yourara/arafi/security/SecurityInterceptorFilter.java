@@ -33,7 +33,7 @@ public class SecurityInterceptorFilter extends OncePerRequestFilter {
     @Value("${arafi.jwt.secret}")
     private String jwtSecret;
 
-    private static final List<String> EXCLUDED_PATHS = List.of("/v1/auth/signup", "/v1/auth/login", "/v1/api-docs", "/swagger-ui", "/health", "/v1/subscriptions/public");
+    private static final List<String> EXCLUDED_PATHS = List.of("/v1/auth/signup", "/v1/auth/login", "/v1/api-docs", "/swagger-ui", "/health", "/v1/subscriptions/public", "/v1/webhooks");
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)

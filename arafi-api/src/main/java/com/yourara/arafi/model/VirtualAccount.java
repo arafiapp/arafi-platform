@@ -31,6 +31,9 @@ public class VirtualAccount {
     @Column(name = "nomba_ref", nullable = false)
     private String nombaRef;
 
+    @Column(name = "gateway_source")
+    private String gatewaySource; // "FLUTTERWAVE", "ALATPAY", "PAYSTACK", "NOMBA"
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

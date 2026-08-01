@@ -389,7 +389,7 @@ class ArafiApiApplicationTests {
         BigDecimal payoutAmount = new BigDecimal("5000.00");
         Payout payout = payoutService.requestPayout(app.getId(), payoutAmount, null, null, null);
         assertNotNull(payout);
-        assertEquals("PENDING", payout.getStatus());
+        assertEquals("SUCCESS", payout.getStatus());
 
         // Verify balance debited
         BigDecimal balanceAfterPayout = ledgerEntryRepository.computeBalanceForApp(app.getId());

@@ -41,6 +41,9 @@ public class WebhookEvent {
     @Column(name = "processing_status")
     private String processingStatus;
 
+    @Column(name = "gateway_source", length = 20)
+    private String gatewaySource; // "FLUTTERWAVE", "ALATPAY", "PAYSTACK", "NOMBA"
+
     @Column(name = "received_at")
     private Instant receivedAt;
 

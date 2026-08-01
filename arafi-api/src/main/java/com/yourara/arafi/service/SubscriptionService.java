@@ -1,6 +1,11 @@
 package com.yourara.arafi.service;
 
 import com.yourara.arafi.model.*;
+import com.yourara.arafi.gateway.GatewayRoutingEngine;
+import com.yourara.arafi.gateway.dto.*;
+import com.yourara.arafi.webhook.ArafiEvent;
+import com.yourara.arafi.webhook.normalizer.WebhookNormalizer;
+import com.yourara.arafi.webhook.normalizer.WebhookNormalizerRegistry;
 import com.yourara.arafi.repository.CustomerRepository;
 import com.yourara.arafi.repository.PlanRepository;
 import com.yourara.arafi.repository.SubscriptionRepository;
@@ -49,6 +54,11 @@ public class SubscriptionService {
     private final CouponRepository couponRepository;
     private final ProductTransactionRepository productTransactionRepository;
     private final ProductService productService;
+    // Phase 2: Multi-gateway routing engine — routes card and bank transfer payments
+    // to the optimal gateway (Flutterwave, ALATPay, Paystack) with circuit breaker protection.
+    // Nomba is retained as a fallback via NombaGatewayAdapter.
+    private final GatewayRoutingEngine gatewayRoutingEngine;
+    private final WebhookNormalizerRegistry webhookNormalizerRegistry;
 
     // callbackUrl is a BROWSER REDIRECT (not server POST). Nomba appends
     // ?orderReference=xxx
@@ -83,6 +93,7 @@ public class SubscriptionService {
                 .name(request.getName())
                 .email(request.getEmail())
                 .externalRef(request.getExternalRef())
+                .bvn(request.getBvn())
                 .mode(mode)
                 .build();
         customerRepository.save(customer);
@@ -174,6 +185,9 @@ public class SubscriptionService {
         Instant periodEnd = null;
         String checkoutUrl = null;
         String resolvedRedirectUrl = request.getRedirectUrl();
+        String gatewayUsed = null;
+        String gatewayReference = null;
+        String flutterwavePaymentMethodId = null;
         if (resolvedRedirectUrl == null || resolvedRedirectUrl.isBlank()) {
             // Fall back to the developer's default redirect URL configured on their app
             App app = appRepository.findById(appId).orElse(null);
@@ -207,78 +221,211 @@ public class SubscriptionService {
             status = "PENDING";
 
         } else if ("CARD".equalsIgnoreCase(paymentMethod)) {
-            if (tokenKey != null && !tokenKey.isBlank()) {
-                // RECURRING USER: Programmatic charge via token
-                Map<String, String> chargeResult = nombaClientService.chargeTokenizedCard(
-                        customer.getEmail(),
-                        chargeAmountKobo,
-                        tokenKey,
-                        nombaClientService.getSubAccountId());
+            // Determine which payment token the customer has stored
+            String fwPaymentMethodId = customer.getFlutterwavePaymentMethodId();
+            String paystackAuthCode = customer.getPaystackAuthorizationCode();
 
-                if ("success".equals(chargeResult.get("status"))) {
+            if (fwPaymentMethodId != null && !fwPaymentMethodId.isBlank()) {
+                // ── RECURRING VIA FLUTTERWAVE (primary card rail) ──
+                RecurringChargeRequest recurringRequest = RecurringChargeRequest.builder()
+                        .customerEmail(customer.getEmail())
+                        .amountNgn(amountDecimal)
+                        .currency("NGN")
+                        .orderReference(subId.toString())
+                        .paymentToken(fwPaymentMethodId)
+                        .gatewayCustomerId(customer.getFlutterwaveCustomerId())
+                        .gatewaySubAccountId(null)
+                        .build();
+
+                GatewayChargeResult chargeResult = gatewayRoutingEngine.routeRecurringCharge(
+                        recurringRequest, "FLUTTERWAVE",
+                        request.isAllowFallback());
+
+                if (chargeResult.isSuccess()) {
                     status = "ACTIVE";
-                    transactionRef = chargeResult.get("transactionId");
+                    transactionRef = chargeResult.getGatewayTransactionId();
+                    gatewayReference = chargeResult.getGatewayTransactionId();
+                    gatewayUsed = "FLUTTERWAVE";
+                    flutterwavePaymentMethodId = fwPaymentMethodId;
                     periodEnd = calculatePeriodEnd(plan.getBillingInterval());
 
                     LedgerEntry entry = LedgerEntry.builder()
                             .appId(appId)
-                            .bankAccountNumber("N/A (Card Payment)")
+                            .bankAccountNumber("N/A (Card Payment - Flutterwave)")
                             .amount(amountDecimal)
                             .entryType("CREDIT")
                             .webhookEventId(transactionRef)
                             .build();
                     ledgerEntryRepository.save(entry);
-
-                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
-                            "card", "ACTIVE", null, null);
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(),
+                            amountDecimal, "card", "ACTIVE", null, null);
                 } else {
                     throw new IllegalStateException(
-                            "Payment gateway processing failed: " + chargeResult.get("message"));
+                            "Payment gateway processing failed: " + chargeResult.getErrorMessage());
                 }
+
+            } else if (paystackAuthCode != null && !paystackAuthCode.isBlank()) {
+                // ── RECURRING VIA PAYSTACK (secondary card rail) ──
+                RecurringChargeRequest recurringRequest = RecurringChargeRequest.builder()
+                        .customerEmail(customer.getEmail())
+                        .amountNgn(amountDecimal)
+                        .currency("NGN")
+                        .orderReference(subId.toString())
+                        .paymentToken(paystackAuthCode)
+                        .build();
+
+                GatewayChargeResult chargeResult = gatewayRoutingEngine.routeRecurringCharge(
+                        recurringRequest, "PAYSTACK",
+                        request.isAllowFallback());
+
+                if (chargeResult.isSuccess()) {
+                    status = "ACTIVE";
+                    transactionRef = chargeResult.getGatewayTransactionId();
+                    gatewayReference = chargeResult.getGatewayTransactionId();
+                    gatewayUsed = "PAYSTACK";
+                    periodEnd = calculatePeriodEnd(plan.getBillingInterval());
+
+                    LedgerEntry entry = LedgerEntry.builder()
+                            .appId(appId)
+                            .bankAccountNumber("N/A (Card Payment - Paystack)")
+                            .amount(amountDecimal)
+                            .entryType("CREDIT")
+                            .webhookEventId(transactionRef)
+                            .build();
+                    ledgerEntryRepository.save(entry);
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(),
+                            amountDecimal, "card", "ACTIVE", null, null);
+                } else {
+                    throw new IllegalStateException(
+                            "Payment gateway processing failed: " + chargeResult.getErrorMessage());
+                }
+
+            } else if (tokenKey != null && !tokenKey.isBlank()) {
+                // ── LEGACY: RECURRING VIA NOMBA (fallback for pre-migration subscriptions) ──
+                log.warn("[SubscriptionService] Customer {} has legacy Nomba tokenKey — routing via NombaGatewayAdapter",
+                        customer.getEmail());
+                RecurringChargeRequest recurringRequest = RecurringChargeRequest.builder()
+                        .customerEmail(customer.getEmail())
+                        .amountNgn(amountDecimal)
+                        .currency("NGN")
+                        .orderReference(subId.toString())
+                        .paymentToken(tokenKey)
+                        .gatewaySubAccountId(nombaClientService.getSubAccountId())
+                        .build();
+
+                GatewayChargeResult chargeResult = gatewayRoutingEngine.routeRecurringCharge(
+                        recurringRequest, "NOMBA", false);
+
+                if (chargeResult.isSuccess()) {
+                    status = "ACTIVE";
+                    transactionRef = chargeResult.getGatewayTransactionId();
+                    gatewayReference = chargeResult.getGatewayTransactionId();
+                    gatewayUsed = "NOMBA";
+                    periodEnd = calculatePeriodEnd(plan.getBillingInterval());
+
+                    LedgerEntry entry = LedgerEntry.builder()
+                            .appId(appId)
+                            .bankAccountNumber("N/A (Card Payment - Nomba Legacy)")
+                            .amount(amountDecimal)
+                            .entryType("CREDIT")
+                            .webhookEventId(transactionRef)
+                            .build();
+                    ledgerEntryRepository.save(entry);
+                    resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(),
+                            amountDecimal, "card", "ACTIVE", null, null);
+                } else {
+                    throw new IllegalStateException(
+                            "Payment gateway processing failed: " + chargeResult.getErrorMessage());
+                }
+
             } else {
-                // FIRST-TIME USER: No card token saved yet!
+                // ── FIRST-TIME USER: Route checkout to Flutterwave (primary card rail) ──
                 status = "PENDING";
                 String orderReference = subId.toString();
 
-                // nombaCallbackUrl = frontend /checkout/callback page (browser redirect target)
-                // Restrict Nomba's checkout options specifically to Card only
-                Map<String, String> checkoutResult = nombaClientService.createCheckoutOrder(
-                        orderReference,
-                        chargeAmountKobo,
-                        customer.getEmail(),
-                        nombaCallbackUrl,
-                        List.of("Card"));
+                CardChargeRequest cardRequest = CardChargeRequest.builder()
+                        .arafiCustomerId(customer.getId().toString())
+                        .customerEmail(customer.getEmail())
+                        .amountNgn(amountDecimal)
+                        .currency("NGN")
+                        .orderReference(orderReference)
+                        .callbackUrl(nombaCallbackUrl)
+                        // Encrypted card fields provided by the frontend (null for redirect flow)
+                        .encryptedCardNumber(request.getEncryptedCardNumber())
+                        .encryptedExpiryMonth(request.getEncryptedExpiryMonth())
+                        .encryptedExpiryYear(request.getEncryptedExpiryYear())
+                        .encryptedCvv(request.getEncryptedCvv())
+                        .cardNonce(request.getCardNonce())
+                        .build();
 
-                if ("success".equals(checkoutResult.get("status"))) {
-                    checkoutUrl = checkoutResult.get("checkoutLink");
+                GatewayChargeResult checkoutResult = gatewayRoutingEngine.routeCardCharge(
+                        cardRequest, amountDecimal, "NGN",
+                        request.getPreferredGateway(),
+                        request.isAllowFallback(),
+                        false);
+
+                if (checkoutResult.isSuccess()) {
+                    checkoutUrl = checkoutResult.getCheckoutUrl();
                     transactionRef = orderReference;
+                    gatewayReference = checkoutResult.getGatewayTransactionId();
+                    gatewayUsed = checkoutResult.getGatewayUsed();
+                    // Store the payment method ID for future recurring charges
+                    // (populated here if FW returned it synchronously, otherwise via webhook)
+                    if (checkoutResult.getPaymentToken() != null) {
+                        customer.setFlutterwavePaymentMethodId(checkoutResult.getPaymentToken());
+                        flutterwavePaymentMethodId = checkoutResult.getPaymentToken();
+                    }
+                    if (checkoutResult.getGatewayCustomerId() != null) {
+                        customer.setFlutterwaveCustomerId(checkoutResult.getGatewayCustomerId());
+                    }
+                    customerRepository.save(customer);
                 } else {
                     throw new IllegalStateException(
-                            "Failed to create checkout order with Nomba: " + checkoutResult.get("message"));
+                            "Failed to create checkout order: " + checkoutResult.getErrorMessage());
                 }
             }
 
         } else if ("BANK_TRANSFER".equalsIgnoreCase(paymentMethod)) {
-            // Check if the customer already has an account number from an earlier checkout
-            // intent
+            // Check if the customer already has a virtual account provisioned
             if (virtualAccountNumber == null || virtualAccountNumber.isBlank()) {
-                // Call Nomba out-of-band to allocate a static bank account right now
+                // Route to ALATPay (primary bank transfer rail) with Nomba fallback
                 String accountRef = "arafi_vban_" + customer.getId().toString() + "_" + System.currentTimeMillis();
                 String accountName = customer.getName() != null && !customer.getName().isBlank()
                         ? customer.getName()
                         : "ARAFI " + customer.getEmail();
-                Map<String, String> accountDetails = nombaClientService.createVirtualAccount(accountRef, accountName,
-                        amountDecimal);
 
-                if ("success".equals(accountDetails.get("status"))) {
-                    virtualAccountNumber = accountDetails.get("bankAccountNumber");
+                // Build first/last name from full name
+                String[] nameParts = accountName.split(" ", 2);
+                String firstName = nameParts[0];
+                String lastName = nameParts.length > 1 ? nameParts[1] : "";
 
+                VirtualAccountRequest vaRequest = VirtualAccountRequest.builder()
+                        .accountRef(accountRef)
+                        .accountName(accountName)
+                        .customerEmail(customer.getEmail())
+                        .customerPhone("")
+                        .firstName(firstName)
+                        .lastName(lastName)
+                        .expectedAmountNgn(amountDecimal)
+                        .currency("NGN")
+                        .orderId(subId.toString())
+                        .description("Arafi Subscription Payment")
+                        .build();
+
+                GatewayAccountResult accountResult = gatewayRoutingEngine.routeDynamicVirtualAccount(
+                        vaRequest,
+                        request.getPreferredGateway(),
+                        request.isAllowFallback());
+
+                if (accountResult.isSuccess()) {
+                    virtualAccountNumber = accountResult.getBankAccountNumber();
+                    gatewayUsed = accountResult.getGatewayUsed();
                     // Persist it back to the customer profile permanently
                     customer.setVirtualAccountNumber(virtualAccountNumber);
                     customerRepository.save(customer);
                 } else {
                     throw new IllegalStateException(
-                            "Failed to provision static virtual account with Nomba: " + accountDetails.get("message"));
+                            "Failed to provision virtual account: " + accountResult.getErrorMessage());
                 }
             } else {
                 log.info(
@@ -286,9 +433,10 @@ public class SubscriptionService {
                         virtualAccountNumber, customer.getEmail());
             }
 
-            status = "PENDING"; // Remains pending until webhook receiver picks up the transfer credit notice
+            status = "PENDING"; // Remains pending until webhook receiver picks up the transfer credit
+            String bankName = "ALATPay / Wema Bank";
             resendEmailService.sendBillingAlert(appId, customer.getEmail(), customer.getEmail(), amountDecimal,
-                    "bank_transfer", "PENDING", "WEMA Bank (Nomba Sandbox)", virtualAccountNumber);
+                    "bank_transfer", "PENDING", bankName, virtualAccountNumber);
 
         } else {
             throw new IllegalArgumentException("Invalid payment method. Expected 'CARD' or 'BANK_TRANSFER'.");
@@ -308,6 +456,9 @@ public class SubscriptionService {
                 .nombaTokenKey("CARD".equalsIgnoreCase(paymentMethod) ? tokenKey : null)
                 .virtualAccountNumber(virtualAccountNumber)
                 .nombaReference(transactionRef)
+                .gatewayUsed(gatewayUsed)
+                .gatewayReference(gatewayReference)
+                .flutterwavePaymentMethodId(flutterwavePaymentMethodId)
                 .checkoutUrl(checkoutUrl)
                 .mode(mode)
                 .redirectUrl(resolvedRedirectUrl)
@@ -536,102 +687,35 @@ public class SubscriptionService {
 
         for (WebhookEvent event : pendingEvents) {
             try {
-                Map<String, Object> payloadMap = event.getRawPayload();
-                String eventType = event.getEventType();
-
-                // Bypasses signature check if we are in sandbox/test mode
-                if (!event.isSignatureVerified()) {
-                    String orderReference = (String) payloadMap.get("requestId");
-                    boolean isSandboxEvent = false;
-                    if (orderReference != null) {
-                        try {
-                            UUID subId = UUID.fromString(orderReference);
-                            Subscription sub = subscriptionRepository.findById(subId).orElse(null);
-                            if (sub == null) {
-                                sub = subscriptionRepository.findByNombaReference(orderReference).orElse(null);
-                            }
-                            if (sub != null && "test".equalsIgnoreCase(sub.getMode())) {
-                                isSandboxEvent = true;
-                            } else {
-                                // Check if it is a product transaction
-                                com.yourara.arafi.model.ProductTransaction ptx = productTransactionRepository.findById(subId).orElse(null);
-                                if (ptx == null) {
-                                    ptx = productTransactionRepository.findByNombaReference(orderReference).orElse(null);
-                                }
-                                if (ptx != null) {
-                                    isSandboxEvent = true;
-                                }
-                            }
-                        } catch (Exception e) {
-                            // Ignored
-                        }
-                    }
-                    if (!isSandboxEvent) {
-                        System.out.println("[WebhookProcessor] Signature verification failed for live event (ID: "
-                                + event.getNombaEventId() + "). Skipping.");
-                        event.setProcessingStatus("failed");
-                        webhookRepository.save(event);
-                        continue;
-                    } else {
-                        System.out.println(
-                                "[WebhookProcessor] Signature verification failed, but bypassing for sandbox/test event (ID: "
-                                        + event.getNombaEventId() + ").");
-                    }
+                String gatewaySource = event.getGatewaySource();
+                if (gatewaySource == null || gatewaySource.isBlank()) {
+                    gatewaySource = "NOMBA"; // legacy fallback
                 }
 
-                System.out.println("[WebhookProcessor] id=" + event.getId() + " eventType=" + eventType + " nombaId="
-                        + event.getNombaEventId());
+                WebhookNormalizer normalizer = webhookNormalizerRegistry.getNormalizer(gatewaySource);
+                ArafiEvent arafiEvent = normalizer.normalize(event.getRawPayload());
 
-                Object dataObj = payloadMap.get("data");
-                if (!(dataObj instanceof Map)) {
-                    System.out.println("[WebhookProcessor] No 'data' map in payload — marking failed.");
-                    event.setProcessingStatus("failed");
+                if (arafiEvent == null) {
+                    System.out.println("[WebhookProcessor] Normalizer skipped event ID: " + event.getId());
+                    event.setProcessingStatus("processed");
                     webhookRepository.save(event);
                     continue;
                 }
 
-                Map<String, Object> data = (Map<String, Object>) dataObj;
+                System.out.println("[WebhookProcessor] id=" + event.getId() + " eventType=" + arafiEvent.getEventType()
+                        + " gateway=" + gatewaySource + " reference=" + arafiEvent.getGatewayReference());
 
-                // Nomba payload: amount is at data.transaction.transactionAmount (NOT
-                // data.amount)
-                Map<String, Object> transaction = data.get("transaction") instanceof Map
-                        ? (Map<String, Object>) data.get("transaction")
-                        : null;
+                if ("payment.succeeded".equalsIgnoreCase(arafiEvent.getEventType())) {
+                    if ("card".equalsIgnoreCase(arafiEvent.getPaymentMethodType())) {
+                        // Extract gateway-specific card tokens from metadata
+                        Map<String, Object> metadata = arafiEvent.getMetadata();
+                        String tokenKey = metadata != null ? (String) metadata.get("nomba_token_key") : null;
+                        String fwPaymentMethodId = metadata != null ? (String) metadata.get("payment_method_id") : null;
+                        String fwCustomerId = metadata != null ? (String) metadata.get("customer_id") : null;
+                        String paystackAuthCode = metadata != null ? (String) metadata.get("paystack_authorization_code") : null;
 
-                BigDecimal amount = null;
-                if (transaction != null && transaction.get("transactionAmount") != null) {
-                    try {
-                        amount = new BigDecimal(transaction.get("transactionAmount").toString());
-                    } catch (NumberFormatException nfe) {
-                        System.err.println("[WebhookProcessor] Could not parse transactionAmount: "
-                                + transaction.get("transactionAmount"));
-                    }
-                }
-
-                String transactionId = event.getNombaEventId();
-                if (transactionId == null && transaction != null && transaction.get("transactionId") != null) {
-                    transactionId = transaction.get("transactionId").toString();
-                }
-
-                if ("payment_success".equalsIgnoreCase(eventType)) {
-
-                    // Determine channel: card tokenization delivers tokenKey at
-                    // data.tokenizedCardData.tokenKey
-                    Map<String, Object> tokenizedCardData = data.get("tokenizedCardData") instanceof Map
-                            ? (Map<String, Object>) data.get("tokenizedCardData")
-                            : null;
-                    String tokenKey = tokenizedCardData != null && tokenizedCardData.get("tokenKey") != null
-                            ? tokenizedCardData.get("tokenKey").toString()
-                            : null;
-
-                    if (tokenKey != null) {
-                        // CARD PAYMENT — authoritative tokenKey from HMAC-verified webhook
-                        // requestId maps to our orderReference (stored as nombaReference on the
-                        // subscription)
-                        String orderReference = (String) payloadMap.get("requestId");
-                        System.out.println("[WebhookProcessor] Card payment + tokenKey detected. orderRef="
-                                + orderReference + " amount=" + amount);
-                        if (orderReference != null && amount != null) {
+                        String orderReference = arafiEvent.getArafiOrderRef();
+                        if (orderReference != null && arafiEvent.getAmount() != null) {
                             boolean isProductTx = false;
                             try {
                                 UUID txId = UUID.fromString(orderReference);
@@ -642,45 +726,39 @@ public class SubscriptionService {
                             }
 
                             if (isProductTx) {
-                                productService.publicVerifyProductCardCheckout(orderReference);
+                                productService.markProductTransactionSuccess(orderReference, arafiEvent.getGatewayReference(), gatewaySource);
                             } else {
-                                processCardPaymentSuccess(orderReference, tokenKey, amount, transactionId);
+                                processCardPaymentSuccess(
+                                        orderReference,
+                                        tokenKey,
+                                        fwPaymentMethodId,
+                                        fwCustomerId,
+                                        paystackAuthCode,
+                                        arafiEvent.getAmount(),
+                                        arafiEvent.getGatewayReference(),
+                                        gatewaySource);
                             }
                         } else {
                             System.out.println("[WebhookProcessor] Card: missing orderReference or amount.");
                         }
-
-                    } else if (transaction != null && transaction.get("aliasAccountNumber") != null) {
-                        // BANK TRANSFER — virtual account credit identified by aliasAccountNumber
-                        String aliasAccountNumber = transaction.get("aliasAccountNumber").toString();
-                        System.out.println("[WebhookProcessor] Bank transfer. aliasAccountNumber=" + aliasAccountNumber
-                                + " amount=" + amount);
-                        if (amount != null) {
-                            if (productTransactionRepository.findByVirtualAccountNumber(aliasAccountNumber).isPresent()) {
-                                productService.processProductBankTransferPayment(aliasAccountNumber, amount, transactionId);
+                    } else if ("bank_transfer".equalsIgnoreCase(arafiEvent.getPaymentMethodType())) {
+                        // Inbound transfer received on dynamic/static virtual account
+                        Map<String, Object> metadata = arafiEvent.getMetadata();
+                        String virtualAccountNumber = metadata != null ? (String) metadata.get("virtual_account_number") : null;
+                        if (virtualAccountNumber != null && arafiEvent.getAmount() != null) {
+                            if (productTransactionRepository.findByVirtualAccountNumber(virtualAccountNumber).isPresent()) {
+                                productService.processProductBankTransferPayment(virtualAccountNumber, arafiEvent.getAmount(), arafiEvent.getGatewayReference());
                             } else {
-                                processVirtualAccountPayment(aliasAccountNumber, amount, transactionId);
+                                processVirtualAccountPayment(virtualAccountNumber, arafiEvent.getAmount(), arafiEvent.getGatewayReference(), gatewaySource);
                             }
                         } else {
-                            System.out.println("[WebhookProcessor] Bank transfer: missing amount.");
+                            System.out.println("[WebhookProcessor] Bank transfer: missing account or amount.");
                         }
-
-                    } else {
-                        System.out.println(
-                                "[WebhookProcessor] payment_success but channel unclear. data keys=" + data.keySet()
-                                        + " transaction keys=" + (transaction != null ? transaction.keySet() : "null"));
                     }
-
-                } else if ("payment_failed".equalsIgnoreCase(eventType)) {
-                    System.out.println("[WebhookProcessor] Payment FAILED for nombaId=" + event.getNombaEventId());
-
-                } else if ("payout_success".equalsIgnoreCase(eventType)
-                        || "payout_failed".equalsIgnoreCase(eventType)
-                        || "payout_refund".equalsIgnoreCase(eventType)) {
-                    System.out.println("[WebhookProcessor] Payout event: " + eventType + " — no handler yet.");
-
+                } else if ("payment.failed".equalsIgnoreCase(arafiEvent.getEventType())) {
+                    System.out.println("[WebhookProcessor] Payment FAILED for reference=" + arafiEvent.getGatewayReference());
                 } else {
-                    System.out.println("[WebhookProcessor] Unhandled eventType='" + eventType + "'");
+                    System.out.println("[WebhookProcessor] Unhandled eventType='" + arafiEvent.getEventType() + "'");
                 }
 
                 event.setProcessingStatus("processed");
@@ -695,8 +773,15 @@ public class SubscriptionService {
         }
     }
 
-    private void processCardPaymentSuccess(String orderReference, String tokenKey, BigDecimal amount,
-            String transactionId) {
+    private void processCardPaymentSuccess(
+            String orderReference,
+            String tokenKey,
+            String fwPaymentMethodId,
+            String fwCustomerId,
+            String paystackAuthCode,
+            BigDecimal amount,
+            String transactionId,
+            String gatewayUsed) {
         Subscription foundSubscription = null;
         try {
             UUID subId = UUID.fromString(orderReference);
@@ -715,27 +800,36 @@ public class SubscriptionService {
                 final Subscription subscription = foundSubscription;
                 Customer customer = customerRepository.findById(subscription.getCustomerId()).orElse(null);
                 if (customer != null) {
-                    // Only update tokenKey if we actually have one — do not null-out an existing
-                    // vault entry
                     if (tokenKey != null && !tokenKey.isBlank() && !"N/A".equals(tokenKey)) {
                         customer.setNombaTokenKey(tokenKey);
-                        customerRepository.save(customer);
                     }
+                    if (fwPaymentMethodId != null && !fwPaymentMethodId.isBlank()) {
+                        customer.setFlutterwavePaymentMethodId(fwPaymentMethodId);
+                        customer.setFlutterwaveCustomerId(fwCustomerId);
+                    }
+                    if (paystackAuthCode != null && !paystackAuthCode.isBlank()) {
+                        customer.setPaystackAuthorizationCode(paystackAuthCode);
+                    }
+                    customerRepository.save(customer);
                 }
 
                 subscription.setStatus("ACTIVE");
-                // Only update tokenKey on subscription if we have one
                 if (tokenKey != null && !tokenKey.isBlank() && !"N/A".equals(tokenKey)) {
                     subscription.setNombaTokenKey(tokenKey);
                 }
+                if (fwPaymentMethodId != null && !fwPaymentMethodId.isBlank()) {
+                    subscription.setFlutterwavePaymentMethodId(fwPaymentMethodId);
+                }
                 subscription.setNombaReference(transactionId);
+                subscription.setGatewayReference(transactionId);
+                subscription.setGatewayUsed(gatewayUsed);
                 subscription.setCurrentPeriodEnd(calculatePeriodEnd(planRepository.findById(subscription.getPlanId())
                         .map(Plan::getBillingInterval).orElse("monthly")));
                 subscriptionRepository.save(subscription);
 
                 LedgerEntry entry = LedgerEntry.builder()
                         .appId(subscription.getAppId())
-                        .bankAccountNumber("N/A (Card Payment)")
+                        .bankAccountNumber("N/A (Card Payment - " + gatewayUsed + ")")
                         .amount(amount)
                         .entryType("CREDIT")
                         .webhookEventId(transactionId)
@@ -761,7 +855,7 @@ public class SubscriptionService {
         }
     }
 
-    private void processVirtualAccountPayment(String virtualAccountNumber, BigDecimal amount, String transactionId) {
+    private void processVirtualAccountPayment(String virtualAccountNumber, BigDecimal amount, String transactionId, String gatewayUsed) {
         List<Subscription> subscriptions = subscriptionRepository.findByVirtualAccountNumber(virtualAccountNumber);
         if (subscriptions.isEmpty()) {
             throw new IllegalArgumentException(
@@ -794,6 +888,8 @@ public class SubscriptionService {
 
             subscription.setCurrentPeriodEnd(periodEnd);
             subscription.setNombaReference(transactionId);
+            subscription.setGatewayReference(transactionId);
+            subscription.setGatewayUsed(gatewayUsed);
             subscriptionRepository.save(subscription);
 
             LedgerEntry entry = LedgerEntry.builder()
@@ -812,7 +908,7 @@ public class SubscriptionService {
 
             customerRepository.findById(subscription.getCustomerId()).ifPresent(customer -> {
                 resendEmailService.sendBillingAlert(subscription.getAppId(), customer.getEmail(), customer.getEmail(),
-                        amount, "bank_transfer", "ACTIVE", "WEMA Bank (Nomba Sandbox)", virtualAccountNumber);
+                        amount, "bank_transfer", "ACTIVE", gatewayUsed + " Wema Rail", virtualAccountNumber);
             });
             System.out.println(
                     "Virtual account payment processed successfully for subscription: " + subscription.getId());
@@ -1246,7 +1342,7 @@ public class SubscriptionService {
         // overwriting an existing key.
         System.out.println("[VerifyPayment] SUCCESS confirmed. Activating subscription. amount=" + amount
                 + " transactionId=" + transactionId + " (tokenKey will arrive via webhook)");
-        processCardPaymentSuccess(orderReference, null, amount, transactionId);
+        processCardPaymentSuccess(orderReference, null, null, null, null, amount, transactionId, "NOMBA");
 
         return Map.of(
                 "success", true,
@@ -1442,7 +1538,7 @@ public class SubscriptionService {
 
         System.out.println(
                 "[PublicVerify] SUCCESS. Activating subscription. amount=" + amount + " txId=" + transactionId);
-        processCardPaymentSuccess(orderReference, null, amount, transactionId);
+        processCardPaymentSuccess(orderReference, null, null, null, null, amount, transactionId, "NOMBA");
 
         // Resolve redirectUrl: subscription override > app default > null
         String redirectUrl = subscription.getRedirectUrl();
@@ -1470,7 +1566,7 @@ public class SubscriptionService {
     @Transactional
     public void simulateVirtualAccountTransfer(String virtualAccountNumber, BigDecimal amount) {
         String mockTxId = "sim_trsf_" + UUID.randomUUID().toString().substring(0, 15);
-        processVirtualAccountPayment(virtualAccountNumber, amount, mockTxId);
+        processVirtualAccountPayment(virtualAccountNumber, amount, mockTxId, "ALATPAY");
     }
 
     @Transactional(readOnly = true)

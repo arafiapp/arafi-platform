@@ -14,4 +14,6 @@ public class CreateCustomerRequest {
 
     @JsonProperty("external_ref")
     private String externalRef; // id from the devs app
+
+    private String bvn; // optional BVN for wallet creation
 }

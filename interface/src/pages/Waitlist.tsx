@@ -270,7 +270,6 @@ export default function Waitlist() {
   const [honeypot, setHoneypot] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
-  const [turnstileReady, setTurnstileReady] = useState(false);
   const [isLight, setIsLight] = useState(false);
 
   // Monitor prefers-color-scheme setting changes to apply light theme correctly
@@ -284,62 +283,84 @@ export default function Waitlist() {
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
-  // Load Cloudflare Turnstile script
+  // Load Cloudflare Turnstile script and render widget
   useEffect(() => {
-    if (document.getElementById("cf-turnstile-script")) {
-      setTurnstileReady(true);
-      return;
-    }
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-    window.onTurnstileLoad = () => {
+    const renderWidget = () => {
+      if (!turnstileRef.current || !window.turnstile) return;
+
+      const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY as string;
+      if (!siteKey) return;
+
+      // Remove existing widget to avoid duplicates on theme change or re-mount
+      if (widgetId.current) {
+        try { window.turnstile.remove(widgetId.current); } catch { /* ignore */ }
+        widgetId.current = null;
+      }
+
+      widgetId.current = window.turnstile.render(turnstileRef.current, {
+        sitekey: siteKey,
+        theme: isLight ? "light" : "dark",
+        size: "normal",
+        callback: (token: string) => {
+          turnstileToken.current = token;
+        },
+        "error-callback": () => {
+          turnstileToken.current = "";
+        },
+        "expired-callback": () => {
+          turnstileToken.current = "";
+        },
+      });
+
       setTurnstileReady(true);
     };
 
-    const script = document.createElement("script");
-    script.id = "cf-turnstile-script";
-    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad&render=explicit";
-    script.async = true;
-    script.defer = true;
-    document.head.appendChild(script);
-
-    return () => {
-      window.onTurnstileLoad = undefined;
+    const startPolling = () => {
+      // If Turnstile is already available on the window, render immediately
+      if (window.turnstile) {
+        renderWidget();
+        return;
+      }
+      // Otherwise poll every 50ms until it loads (max 10s)
+      let attempts = 0;
+      pollTimer = setInterval(() => {
+        attempts++;
+        if (window.turnstile) {
+          clearInterval(pollTimer!);
+          pollTimer = null;
+          renderWidget();
+        } else if (attempts > 200) {
+          // 200 * 50ms = 10s — give up
+          clearInterval(pollTimer!);
+          pollTimer = null;
+        }
+      }, 50);
     };
-  }, []);
 
-  // Render Turnstile widget based on active theme
-  useEffect(() => {
-    if (!turnstileReady || !turnstileRef.current || !window.turnstile) return;
-
-    const siteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY as string;
-    if (!siteKey) return;
-
-    // Remove existing if any to avoid duplicates on redraws
-    if (widgetId.current) {
-      window.turnstile.remove(widgetId.current);
+    // Inject the script only once; if already present, just start polling
+    if (!document.getElementById("cf-turnstile-script")) {
+      const script = document.createElement("script");
+      script.id = "cf-turnstile-script";
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.onload = startPolling;
+      document.head.appendChild(script);
+    } else {
+      startPolling();
     }
 
-    widgetId.current = window.turnstile.render(turnstileRef.current, {
-      sitekey: siteKey,
-      theme: isLight ? "light" : "dark",
-      size: "normal",
-      callback: (token: string) => {
-        turnstileToken.current = token;
-      },
-      "error-callback": () => {
-        turnstileToken.current = "";
-      },
-      "expired-callback": () => {
-        turnstileToken.current = "";
-      },
-    });
-
     return () => {
+      if (pollTimer) clearInterval(pollTimer);
       if (widgetId.current && window.turnstile) {
-        window.turnstile.remove(widgetId.current);
+        try { window.turnstile.remove(widgetId.current); } catch { /* ignore */ }
+        widgetId.current = null;
       }
     };
-  }, [turnstileReady, isLight]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLight]);
 
   // Staged fade-up entry
   useEffect(() => {
@@ -385,7 +406,7 @@ export default function Waitlist() {
 
       // Turnstile check
       if (!turnstileToken.current) {
-        setErrorMsg("Please complete the security check above.");
+        setErrorMsg("Please complete the verification check below before submitting.");
         return;
       }
 

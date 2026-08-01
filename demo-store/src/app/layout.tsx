@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Arafi Demo Store & Integration Playground",
-  description: "Experience Payment Logic as a Service (PLaaS) on Nomba's Rails. Test checkouts, recurring plans, and double-entry ledger hooks.",
+  title: "Arafi Integration Sandbox — Coming Back Soon",
+  description: "The Arafi API sandbox is temporarily offline while the team builds. Leave your email to be notified when the live payment flow demo is back up.",
 };
 
 export default function RootLayout({

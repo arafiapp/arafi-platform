@@ -81,8 +81,8 @@ const Landing = () => {
   const [failoverLog, setFailoverLog] = useState<string[]>([]);
   const [isSimulatingFailover, setIsSimulatingFailover] = useState(false);
 
-  // 2. Lancer Milestone Stepper
-  const [lancerStep, setLancerStep] = useState(1);
+  // 2. Ara Milestone Stepper
+  const [araStep, setAraStep] = useState(1);
 
   // 3. BYOK Vault simulation
   const [vaultKeyMasked, setVaultKeyMasked] = useState(true);
@@ -819,7 +819,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
         <Architecture />
 
         {/* ========================================================= */}
-        {/* 6. HOW ARAFI FITS WITH LANCER (CUSTOMER ZERO)             */}
+        {/* 6. HOW ARAFI FITS WITH ARA (CUSTOMER ZERO)                */}
         {/* ========================================================= */}
         <section className="max-w-max-width mx-auto px-margin-mobile md:px-margin-desktop mb-40">
           <div className="rounded-[2rem] border border-primary/20 bg-gradient-to-b from-surface-container to-surface-container/80 p-8 md:p-14 shadow-2xl relative overflow-hidden fade-up">
@@ -830,10 +830,10 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
                 Proof-of-Concept Client • Customer Zero
               </div>
               <h2 className="font-headline-lg text-3xl md:text-5xl text-on-surface tracking-tight font-bold">
-                How Arafi Powers Lancer
+                How Arafi Powers Ara
               </h2>
               <p className="font-body-md text-on-surface/70 text-base md:text-lg mt-4 leading-relaxed">
-                This is where the software synergy becomes practical. A real-world freelance platform where global clients hire developers with milestone guarantees.
+                This is where the software synergy becomes practical. <strong className="text-on-surface font-semibold">Ara</strong> is an event management operating system that allows event planners to manage an event end-to-end—from booking vendors and talking to clients to organizing RSVPs and securing milestone vendor deposits.
               </p>
             </div>
 
@@ -844,14 +844,14 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
                     01
                   </div>
                   <h3 className="font-headline-md text-lg text-on-surface font-bold mb-2">
-                    Lancer is Customer Zero
+                    Ara is Customer Zero
                   </h3>
                   <p className="font-body-md text-sm text-on-surface/60 leading-relaxed">
-                    A decentralized freelance platform where clients hire developers across Africa and Latin America. Lancer needs global card checkouts and milestone escrows without obtaining banking licenses.
+                    An all-in-one OS for event planners handling vendor bookings, client negotiations, event budgets, and guest RSVPs. Planners and vendors need guaranteed deposit protection without Ara taking custody or becoming a licensed bank.
                   </p>
                 </div>
                 <div className="mt-4 pt-3 border-t border-on-surface/5 text-[11px] font-label-mono text-primary">
-                  The Freelance Marketplace
+                  The Event Management OS
                 </div>
               </div>
 
@@ -864,7 +864,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
                     Arafi is the Invisible Engine
                   </h3>
                   <p className="font-body-md text-sm text-on-surface/60 leading-relaxed">
-                    When a client funds a milestone on Lancer, Lancer doesn't build a billing engine. It makes an API call to Arafi. Arafi handles debit card routing, SEP-24 anchor on-ramping, and notifies Lancer's Soroban contract.
+                    When an event client pays a budget retainer or secures a vendor booking (caterer, DJ, venue), Ara doesn't build complex billing rails. It makes a single API call to Arafi. Arafi handles domestic card routing, international SEP-24 on-ramping, and locks vendor deposits into Soroban milestone escrows.
                   </p>
                 </div>
                 <div className="mt-4 pt-3 border-t border-on-surface/5 text-[11px] font-label-mono text-emerald-400">
@@ -881,7 +881,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
                     The Standalone Product
                   </h3>
                   <p className="font-body-md text-sm text-on-surface/60 leading-relaxed">
-                    Once Arafi reliably powers Lancer, any external developer, SaaS founder, or gig platform can integrate Arafi’s API to solve payment routing, failover, and crypto settlement hurdles in days.
+                    Once Arafi reliably powers Ara's high-stakes vendor deposits and multi-milestone event payouts, any external booking marketplace, hospitality SaaS, or gig platform can integrate Arafi’s API to solve payments in days.
                   </p>
                 </div>
                 <div className="mt-4 pt-3 border-t border-on-surface/5 text-[11px] font-label-mono text-tertiary">
@@ -894,16 +894,16 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
             <div className="bg-surface-container-highest/80 border border-on-surface/10 rounded-2xl p-6 md:p-8">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                 <div>
-                  <h4 className="font-headline-md text-base text-on-surface font-bold">Interactive Lancer Milestone Flow</h4>
-                  <p className="text-xs text-on-surface/50 font-label-mono">See how an API call to Arafi orchestrates client card payment to Soroban escrow</p>
+                  <h4 className="font-headline-md text-base text-on-surface font-bold">Interactive Ara Vendor Milestone Flow</h4>
+                  <p className="text-xs text-on-surface/50 font-label-mono">See how an API call to Arafi orchestrates client event funding to trustless Soroban vendor escrow</p>
                 </div>
                 <div className="flex items-center gap-2">
                   {[1, 2, 3, 4].map((step) => (
                     <button
                       key={step}
-                      onClick={() => setLancerStep(step)}
+                      onClick={() => setAraStep(step)}
                       className={`px-3 py-1 rounded-full text-xs font-label-mono transition-colors ${
-                        lancerStep === step
+                        araStep === step
                           ? "bg-primary text-white font-bold"
                           : "bg-surface-container text-on-surface/60 hover:bg-surface-container-highest"
                       }`}
@@ -915,19 +915,19 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
               </div>
 
               <div className="bg-surface-container p-6 rounded-xl border border-on-surface/10">
-                {lancerStep === 1 && (
+                {araStep === 1 && (
                   <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
-                      <span className="material-symbols-outlined text-primary text-3xl">shopping_cart_checkout</span>
+                      <span className="material-symbols-outlined text-primary text-3xl">celebration</span>
                       <div>
-                        <div className="font-headline-md text-sm font-bold text-on-surface">Client Initiates Milestone Funding</div>
-                        <div className="text-xs text-on-surface/60">London client pays $2,000 for "Mobile App UI Overhaul" on Lancer.</div>
+                        <div className="font-headline-md text-sm font-bold text-on-surface">Client Funds Event &amp; Books Vendors</div>
+                        <div className="text-xs text-on-surface/60">An event client in London pays $4,500 for catering and venue deposit on Ara.</div>
                       </div>
                     </div>
                     <span className="text-xs font-label-mono px-3 py-1 rounded bg-primary/10 text-primary">POST /v1/payments/charge</span>
                   </div>
                 )}
-                {lancerStep === 2 && (
+                {araStep === 2 && (
                   <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
                       <span className="material-symbols-outlined text-emerald-400 text-3xl">sync_alt</span>
@@ -939,25 +939,25 @@ app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
                     <span className="text-xs font-label-mono px-3 py-1 rounded bg-emerald-500/10 text-emerald-400">Zero Chargeback Risk</span>
                   </div>
                 )}
-                {lancerStep === 3 && (
+                {araStep === 3 && (
                   <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
                       <span className="material-symbols-outlined text-[#ff5f56] text-3xl">lock</span>
                       <div>
-                        <div className="font-headline-md text-sm font-bold text-on-surface">Soroban Milestone Smart Contract Locked</div>
-                        <div className="text-xs text-on-surface/60">Funds locked on Stellar ledger. Arafi ledger listener notifies Lancer backend: "Verified and locked".</div>
+                        <div className="font-headline-md text-sm font-bold text-on-surface">Soroban Vendor Milestone Contract Locked</div>
+                        <div className="text-xs text-on-surface/60">Funds locked on Stellar ledger. Arafi notifies Ara backend: "Vendor deposit locked on-chain — booking secured".</div>
                       </div>
                     </div>
-                    <span className="text-xs font-label-mono px-3 py-1 rounded bg-error/10 text-error">Contract Escrow Active</span>
+                    <span className="text-xs font-label-mono px-3 py-1 rounded bg-error/10 text-error">Deposit Escrow Active</span>
                   </div>
                 )}
-                {lancerStep === 4 && (
+                {araStep === 4 && (
                   <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
                       <span className="material-symbols-outlined text-emerald-400 text-3xl">task_alt</span>
                       <div>
-                        <div className="font-headline-md text-sm font-bold text-on-surface">Work Approved &amp; Instant On-Chain Release</div>
-                        <div className="text-xs text-on-surface/60">Client approves pull request. Contract releases 2,000 USDC directly to African developer's wallet.</div>
+                        <div className="font-headline-md text-sm font-bold text-on-surface">Event Delivered &amp; Instant Vendor Payout</div>
+                        <div className="text-xs text-on-surface/60">Planner confirms vendor service at event. Soroban contract releases 4,500 USDC directly to vendor's wallet.</div>
                       </div>
                     </div>
                     <span className="text-xs font-label-mono px-3 py-1 rounded bg-emerald-500/10 text-emerald-400">1.0% Settlement Surcharge</span>

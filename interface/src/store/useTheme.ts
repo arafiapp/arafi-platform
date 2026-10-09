@@ -11,11 +11,11 @@ interface ThemeState {
 export const useTheme = create<ThemeState>()(
   persist(
     (set) => ({
-      theme: 'dark', // Default theme
+      theme: 'light', // Default theme set to light
       setTheme: (theme) => set({ theme }),
     }),
     {
-      name: 'theme-storage', // Key used in localStorage
+      name: 'theme-storage-v2', // Key updated to migrate to light mode default
     }
   )
 )

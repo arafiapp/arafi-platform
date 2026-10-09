@@ -1,8 +1,7 @@
 import { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import ProtectedRoute from "./components/shared/ProtectedRoute";
-import Waitlist from "./pages/Waitlist";
-import LandingOriginal from "./pages/LandingOriginal";
+import Landing from "./pages/Landing";
 import Signup from "./pages/Signup";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -66,26 +65,10 @@ function App() {
         <ToastContainer />
         <Routes>
            {/* Public routes */}
-          <Route path="/" element={<Waitlist />} />
+          <Route path="/" element={<Landing />} />
 
-          {/* ── Developer-only: original landing page preserved ── */}
-          {/* The frontend dev accesses this directly: /platform */}
-          <Route path="/platform" element={<LandingOriginal />} />
-
-          {/* ── Waitlist mode guard ── */}
-          {/* When VITE_WAITLIST_MODE=true, redirect /signup and /login to the waitlist. */}
-          {/* The team bypasses this by navigating directly to /dashboard (which still requires auth). */}
-          {import.meta.env.VITE_WAITLIST_MODE === "true" ? (
-            <>
-              <Route path="/signup" element={<Navigate to="/" replace />} />
-              <Route path="/login" element={<Navigate to="/" replace />} />
-            </>
-          ) : (
-            <>
-              <Route path="/signup" element={<Signup />} />
-              <Route path="/login" element={<Login />} />
-            </>
-          )}
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/login" element={<Login />} />
 
           <Route path="/checkout/callback" element={<CheckoutCallback />} />
           <Route path="/checkout/:subscriptionId" element={<CheckoutPage />} />
